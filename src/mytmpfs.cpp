@@ -5,6 +5,7 @@
 static const struct fuse_operations mytmpfs_op = {
     .getattr = mytmpfs_getattr,
     .mkdir = mytmpfs_mkdir,
+    .rmdir = mytmpfs_rmdir,
     .opendir = mytmpfs_opendir,
     .readdir = mytmpfs_readdir,
     .releasedir = mytmpfs_releasedir,
@@ -19,7 +20,7 @@ int mytmpfs_resolve_path(const char *path, ino_t *ino)
     while (i < strlen(path)) {
         size_t len = strchrnul(path + i, '/') - (path + i);
         int found = 0;
-        for (unsigned int j = 0; j < ((unsigned long*)DATA->userdata[*ino - 1])[0]; j += sizeof(struct dirent)) {
+        for (unsigned long j = 0; j < ((unsigned long*)DATA->userdata[*ino - 1])[0]; j += sizeof(struct dirent)) {
             de = (dirent*)((unsigned char*)DATA->userdata[*ino - 1] + sizeof(unsigned long) + j);
             if (memcmp(de->d_name, path + i, len) == 0) {
                 found = 1;
@@ -65,8 +66,8 @@ int mytmpfs_opendir(const char *path, struct fuse_file_info *fi)
 int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
     struct dirent *de;
-    for (unsigned int j = 0; j < ((unsigned long*)DATA->userdata[fi->fh - 1])[0]; j += sizeof(struct dirent)) {
-        de = (dirent*)((char*)DATA->userdata[fi->fh - 1] + sizeof(unsigned long) + j);
+    for (unsigned long i = 0; i < ((unsigned long*)DATA->userdata[fi->fh - 1])[0]; i += sizeof(struct dirent)) {
+        de = (dirent*)((char*)DATA->userdata[fi->fh - 1] + sizeof(unsigned long) + i);
         if (filler(buf, de->d_name, NULL, 0, fuse_fill_dir_flags()) != 0) {
             return -ENOMEM;
         }
@@ -178,7 +179,56 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
 
 int mytmpfs_rmdir(const char *path)
 {
+    const char *lst = strrchr(path, '/');
+    const char *name = lst + 1;
+    char *ppath = (char*)malloc(lst - path + 1);
+    memcpy(ppath, path, lst - path);
+    ppath[lst - path] = '\0';
 
+    ino_t ino;
+    if (mytmpfs_resolve_path(ppath, &ino) != 0) {
+        free(ppath);
+        return -ENOENT;
+    }
+
+    dirent *de;
+    unsigned long res = UINT64_MAX;
+    for (unsigned long i = 0; i < ((unsigned long*)DATA->userdata[ino - 1])[0]; i += sizeof(struct dirent)) {
+        de = (dirent*)((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + i);
+        if (strcmp(name, de->d_name) == 0) {
+            res = i;
+            break;
+        }
+    }
+    if (res == UINT64_MAX) {
+        return -ENOENT;
+    }
+
+    unsigned long cnt = ((unsigned long*)DATA->userdata[de->d_ino - 1])[0] / sizeof(dirent);
+    if (cnt != 2) {
+        return -ENOTEMPTY;
+    }
+
+    free(DATA->userdata[de->d_ino - 1]);
+    mytmpfs_delete_stat(de->d_ino, DATA);
+
+    struct stat stbuf;
+    mytmpfs_get_stat(ino, &stbuf, DATA);
+    time(&stbuf.st_atime);
+    stbuf.st_mtime = stbuf.st_atime;
+    stbuf.st_nlink--;
+
+    memcpy((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + res,
+           (char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + res + sizeof(dirent),
+           stbuf.st_size - res - sizeof(unsigned long) - sizeof(dirent));
+    
+    stbuf.st_size -= sizeof(dirent);
+    stbuf.st_blocks = (stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    ((unsigned long*)DATA->userdata[ino - 1])[0] -= sizeof(dirent);
+    DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
+
+    mytmpfs_set_stat(ino, &stbuf, DATA);
+    return 0;
 }
 
 int main(int argc, char *argv[])
