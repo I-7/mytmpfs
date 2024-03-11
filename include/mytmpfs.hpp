@@ -6,15 +6,14 @@
 #include <fuse.h>
 #include <dirent.h>
 #include <errno.h>
-#include <cstdlib>
-#include <cstdio>
-#include <cstring>
-#include <fstream>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 #define BLOCK_SIZE              512
 
 #define STATS_ROOTS             ((BLOCK_SIZE - 2 * sizeof(unsigned long)) / sizeof(void*))
-#define BLOCKS_PER_PAGE         16
+#define BLOCKS_PER_PAGE         8
 #define STATS_PER_PAGE          ((BLOCK_SIZE * BLOCKS_PER_PAGE - 3 * sizeof(unsigned long)) / sizeof(struct stat))
 
 struct mytmpfs_data
@@ -27,16 +26,16 @@ struct mytmpfs_data
     void **userdata;
 
     #ifdef DEBUG
-    std::ofstream dbg;
+    FILE* dbg;
     #endif
 };
 
 #define DATA ((mytmpfs_data*)(fuse_get_context()->private_data))
 
 #ifdef DEBUG
-#define DBG (((mytmpfs_data*)(fuse_get_context()->private_data))->dbg)
+#define DBG(...) fprintf(DATA->dbg, __VA_ARGS__)
 #else
-#define DBG //
+#define DBG(...) void(0);
 #endif
 
 int mytmpfs_resolve_path(const char *path, ino_t *inobuf);
@@ -47,5 +46,10 @@ int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
 int mytmpfs_releasedir(const char *path, struct fuse_file_info *fi);
 int mytmpfs_mkdir(const char *path, mode_t mode);
 int mytmpfs_rmdir(const char *path);
+int mytmpfs_open(const char *path, struct fuse_file_info *fi);
+int mytmpfs_release(const char *path, struct fuse_file_info *fi);
+int mytmpfs_read(const char *path, char *buf, size_t len, off_t offset, struct fuse_file_info *fi);
+int mytmpfs_write(const char *path, const char *buf, size_t len, off_t offset, struct fuse_file_info *fi);
+int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev);
 
 #endif

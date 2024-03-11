@@ -11,8 +11,6 @@ struct stat_tree_leaf
     struct stat stats[STATS_PER_PAGE];
 };
 
-static_assert(STATS_PER_PAGE <= 8 * sizeof(unsigned long));
-
 struct stat_tree_node
 {
     unsigned long type;

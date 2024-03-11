@@ -1,11 +1,15 @@
 #include "mytmpfs.hpp"
 #include "stat_tree.hpp"
-#include <iostream>
 
 static const struct fuse_operations mytmpfs_op = {
     .getattr = mytmpfs_getattr,
+    .mknod = mytmpfs_mknod,
     .mkdir = mytmpfs_mkdir,
     .rmdir = mytmpfs_rmdir,
+    .open = mytmpfs_open,
+    .read = mytmpfs_read,
+    .write = mytmpfs_write,
+    .release = mytmpfs_release,
     .opendir = mytmpfs_opendir,
     .readdir = mytmpfs_readdir,
     .releasedir = mytmpfs_releasedir,
@@ -21,7 +25,7 @@ int mytmpfs_resolve_path(const char *path, ino_t *ino)
         size_t len = strchrnul(path + i, '/') - (path + i);
         int found = 0;
         for (unsigned long j = 0; j < ((unsigned long*)DATA->userdata[*ino - 1])[0]; j += sizeof(struct dirent)) {
-            de = (dirent*)((unsigned char*)DATA->userdata[*ino - 1] + sizeof(unsigned long) + j);
+            de = (dirent*)((unsigned char*)DATA->userdata[*ino - 1] + 2 * sizeof(unsigned long) + j);
             if (memcmp(de->d_name, path + i, len) == 0) {
                 found = 1;
                 *ino = de->d_ino;
@@ -60,6 +64,7 @@ int mytmpfs_opendir(const char *path, struct fuse_file_info *fi)
         return -ENOENT;
     }
     fi->fh = ino;
+    ((unsigned long*)DATA->userdata[ino - 1])[1]++;
     return 0;
 }
 
@@ -67,17 +72,24 @@ int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
 {
     struct dirent *de;
     for (unsigned long i = 0; i < ((unsigned long*)DATA->userdata[fi->fh - 1])[0]; i += sizeof(struct dirent)) {
-        de = (dirent*)((char*)DATA->userdata[fi->fh - 1] + sizeof(unsigned long) + i);
+        de = (dirent*)((char*)DATA->userdata[fi->fh - 1] + 2 * sizeof(unsigned long) + i);
         if (filler(buf, de->d_name, NULL, 0, fuse_fill_dir_flags()) != 0) {
             return -ENOMEM;
         }
     }
+
+    struct stat stbuf;
+    mytmpfs_get_stat(fi->fh, &stbuf, DATA);
+    time(&stbuf.st_atime);
+    mytmpfs_set_stat(fi->fh, &stbuf, DATA);
+
     return 0;
 }
 
 int mytmpfs_releasedir(const char *path, struct fuse_file_info *fi)
 {
     if (fi != NULL) {
+        ((unsigned long*)DATA->userdata[fi->fh - 1])[1]--;
         fi->fh = (unsigned long)NULL;
     }
     return 0;
@@ -104,14 +116,14 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
 
     ostat.st_nlink++;
     ostat.st_size += sizeof(dirent);
-    ostat.st_blocks = (ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    ostat.st_blocks = (2 * sizeof(unsigned long) + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     time(&ostat.st_atime);
     ostat.st_mtime = ostat.st_atime;
 
     nstat.st_mode = mode | S_IFDIR;
     nstat.st_nlink = 2;
-    nstat.st_size = sizeof(unsigned long) + 2 * sizeof(dirent);
-    nstat.st_blocks = (nstat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    nstat.st_size = 2 * sizeof(dirent);
+    nstat.st_blocks = (2 * sizeof(unsigned long) + nstat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     nstat.st_ctime = ostat.st_atime;
     nstat.st_atime = ostat.st_atime;
     nstat.st_mtime = ostat.st_atime;
@@ -146,27 +158,28 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
         mytmpfs_delete_stat(nino, DATA);
         free(ppath);
         ostat.st_size -= sizeof(dirent);
-        ostat.st_blocks = (ostat.st_blocks + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        ostat.st_blocks = (2 * sizeof(unsigned long) + ostat.st_blocks + BLOCK_SIZE - 1) / BLOCK_SIZE;
         DATA->userdata[ino - 1] = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
         return -ENOMEM;
     }
     ((unsigned long*)DATA->userdata[nino - 1])[0] = 0;
+    ((unsigned long*)DATA->userdata[nino - 1])[1] = 0;
 
     mytmpfs_set_stat(ino, &ostat, DATA);
 
-    dirent *de = (dirent*)((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + ((unsigned long*)DATA->userdata[ino - 1])[0]);
+    dirent *de = (dirent*)((char*)DATA->userdata[ino - 1] + 2 * sizeof(unsigned long) + ((unsigned long*)DATA->userdata[ino - 1])[0]);
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, name);
     de->d_ino = nino;
     ((unsigned long*)DATA->userdata[ino - 1])[0] += sizeof(dirent);
 
-    de = (dirent*)((char*)DATA->userdata[nino - 1] + sizeof(unsigned long) + ((unsigned long*)DATA->userdata[nino - 1])[0]);
+    de = (dirent*)((char*)DATA->userdata[nino - 1] + 2 * sizeof(unsigned long) + ((unsigned long*)DATA->userdata[nino - 1])[0]);
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, ".");
     de->d_ino = nino;
     ((unsigned long*)DATA->userdata[nino - 1])[0] += sizeof(dirent);
 
-    de = (dirent*)((char*)DATA->userdata[nino - 1] + sizeof(unsigned long) + ((unsigned long*)DATA->userdata[nino - 1])[0]);
+    de = (dirent*)((char*)DATA->userdata[nino - 1] + 2 * sizeof(unsigned long) + ((unsigned long*)DATA->userdata[nino - 1])[0]);
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, "..");
     de->d_ino = ino;
@@ -194,7 +207,7 @@ int mytmpfs_rmdir(const char *path)
     dirent *de;
     unsigned long res = UINT64_MAX;
     for (unsigned long i = 0; i < ((unsigned long*)DATA->userdata[ino - 1])[0]; i += sizeof(struct dirent)) {
-        de = (dirent*)((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + i);
+        de = (dirent*)((char*)DATA->userdata[ino - 1] + 2 * sizeof(unsigned long) + i);
         if (strcmp(name, de->d_name) == 0) {
             res = i;
             break;
@@ -209,6 +222,10 @@ int mytmpfs_rmdir(const char *path)
         return -ENOTEMPTY;
     }
 
+    if (((unsigned long*)DATA->userdata[de->d_ino - 1])[1] != 0) {
+        return -EBUSY;
+    }
+
     free(DATA->userdata[de->d_ino - 1]);
     mytmpfs_delete_stat(de->d_ino, DATA);
 
@@ -218,16 +235,161 @@ int mytmpfs_rmdir(const char *path)
     stbuf.st_mtime = stbuf.st_atime;
     stbuf.st_nlink--;
 
-    memcpy((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + res,
-           (char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + res + sizeof(dirent),
-           stbuf.st_size - res - sizeof(unsigned long) - sizeof(dirent));
+    memcpy((char*)DATA->userdata[ino - 1] + 2 * sizeof(unsigned long) + res,
+           (char*)DATA->userdata[ino - 1] + 2 * sizeof(unsigned long) + res + sizeof(dirent),
+           stbuf.st_size - res - 2 * sizeof(unsigned long) - sizeof(dirent));
     
     stbuf.st_size -= sizeof(dirent);
-    stbuf.st_blocks = (stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    stbuf.st_blocks = (2 * sizeof(unsigned long) + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     ((unsigned long*)DATA->userdata[ino - 1])[0] -= sizeof(dirent);
     DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
 
     mytmpfs_set_stat(ino, &stbuf, DATA);
+    return 0;
+}
+
+int mytmpfs_open(const char *path, struct fuse_file_info *fi)
+{
+    ino_t ino;
+    if (mytmpfs_resolve_path(path, &ino) != 0) {
+        return -ENOENT;
+    }
+    fi->fh = ino;
+    ((unsigned long*)DATA->userdata[ino - 1])[1]++;
+    return 0;
+}
+
+int mytmpfs_read(const char *path, char *buf, size_t len, off_t offset, struct fuse_file_info *fi)
+{
+    size_t i = 0;
+    size_t eof = ((unsigned long*)DATA->userdata[fi->fh - 1])[0];
+    while (offset + i < eof && i < len) {
+        buf[i] = ((char*)((unsigned long*)DATA->userdata[fi->fh - 1] + 2))[offset + i];
+        i++;
+    }
+
+    struct stat stbuf;
+    mytmpfs_get_stat(fi->fh, &stbuf, DATA);
+    time(&stbuf.st_atime);
+    mytmpfs_set_stat(fi->fh, &stbuf, DATA);
+
+    return i;
+}
+
+int mytmpfs_write(const char *path, const char *buf, size_t len, off_t offset, struct fuse_file_info *fi)
+{
+    if ((unsigned long)offset > ((unsigned long*)DATA->userdata[fi->fh - 1])[0]) {
+        return -EFBIG;
+    }
+
+    struct stat stbuf;
+    mytmpfs_get_stat(fi->fh, &stbuf, DATA);
+    stbuf.st_size = offset + len;
+    stbuf.st_blocks = (2 * sizeof(unsigned long*) + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    stbuf.st_mtime = time(&stbuf.st_atime);
+
+    void* tmp = (void*)realloc(DATA->userdata[fi->fh - 1], stbuf.st_blocks * BLOCK_SIZE);
+    if (tmp == NULL) {
+        return -ENOMEM;
+    }
+    DATA->userdata[fi->fh - 1] = tmp;
+
+    memcpy((char*)((unsigned long*)DATA->userdata[fi->fh - 1] + 2) + offset, buf, len);
+    ((unsigned long*)DATA->userdata[fi->fh - 1])[0] = offset + len;
+    mytmpfs_set_stat(fi->fh, &stbuf, DATA);
+    return len;
+}
+
+int mytmpfs_release(const char *path, struct fuse_file_info *fi)
+{
+    if (fi != NULL) {
+        ((unsigned long*)DATA->userdata[fi->fh - 1])[1]--;
+        fi->fh = (unsigned long)NULL;
+    }
+    return 0;
+}
+
+int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
+{
+    const char *lst = strrchr(path, '/');
+    const char *name = lst + 1;
+    char *ppath = (char*)malloc(lst - path + 1);
+    memcpy(ppath, path, lst - path);
+    ppath[lst - path] = '\0';
+
+    ino_t ino;
+    if (mytmpfs_resolve_path(ppath, &ino) != 0) {
+        free(ppath);
+        return -ENOENT;
+    }
+
+    struct stat ostat, nstat;
+    mytmpfs_get_stat(ino, &ostat, DATA);
+
+    memcpy(&nstat, &ostat, sizeof(struct stat));
+
+    ostat.st_nlink++;
+    ostat.st_size += sizeof(dirent);
+    ostat.st_blocks = (2 * sizeof(unsigned long) + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    time(&ostat.st_atime);
+    ostat.st_mtime = ostat.st_atime;
+
+    nstat.st_dev = dev;
+    nstat.st_mode = mode | S_IFREG;
+    nstat.st_nlink = 1;
+    nstat.st_size = 0;
+    nstat.st_blocks = (2 * sizeof(unsigned long) + nstat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    nstat.st_ctime = ostat.st_atime;
+    nstat.st_atime = ostat.st_atime;
+    nstat.st_mtime = ostat.st_atime;
+
+    ino_t nino;
+    if (mytmpfs_create_stat(&nstat, &nino, DATA) != 0) {
+        free(ppath);
+        return -ENOMEM;
+    }
+
+    if (nino >= DATA->userdata_count + 1) {
+        void **tmp = (void**)realloc(DATA->userdata, 2 * DATA->userdata_count * sizeof(void*));
+        if (tmp == NULL) {
+            mytmpfs_delete_stat(nino, DATA);
+            free(ppath);
+            return -ENOMEM;
+        }
+        DATA->userdata = tmp;
+        DATA->userdata_count *= 2;
+    }
+
+    void *tmp = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
+    if (tmp == NULL) {
+        mytmpfs_delete_stat(nino, DATA);
+        free(ppath);
+        return -ENOMEM;
+    }
+    DATA->userdata[ino - 1] = tmp;
+    
+    DATA->userdata[nino - 1] = (void*)malloc(nstat.st_blocks * BLOCK_SIZE);
+    if (DATA->userdata[nino - 1] == NULL) {
+        mytmpfs_delete_stat(nino, DATA);
+        free(ppath);
+        ostat.st_size -= sizeof(dirent);
+        ostat.st_blocks = (2 * sizeof(unsigned long) + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        DATA->userdata[ino - 1] = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
+        return -ENOMEM;
+    }
+    ((unsigned long*)DATA->userdata[nino - 1])[0] = 0;
+    ((unsigned long*)DATA->userdata[nino - 1])[1] = 0;
+
+    mytmpfs_set_stat(ino, &ostat, DATA);
+
+    dirent *de = (dirent*)((char*)DATA->userdata[ino - 1] + 2 * sizeof(unsigned long) + ((unsigned long*)DATA->userdata[ino - 1])[0]);
+    memset(de->d_name, 0, sizeof(de->d_name));
+    strcpy(de->d_name, name);
+    de->d_ino = nino;
+    ((unsigned long*)DATA->userdata[ino - 1])[0] += sizeof(dirent);
+
+    free(ppath);
+
     return 0;
 }
 
@@ -244,7 +406,7 @@ int main(int argc, char *argv[])
     }
 
     #ifdef DEBUG
-    new (&mytmpfs_dt->dbg) std::ofstream("dbglog.txt");
+    mytmpfs_dt->dbg = fopen("dbglog.txt", "w");
     #endif
 
     if (mytmpfs_init_stat(mytmpfs_dt) != 0) {
@@ -254,8 +416,8 @@ int main(int argc, char *argv[])
     if (stat(argv[argc - 1], &statbuf) != 0) {
         goto ex2;
     }
-    statbuf.st_size = sizeof(unsigned long) + 2 * sizeof(dirent);
-    statbuf.st_blocks = (sizeof(unsigned long) + 2 * sizeof(dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    statbuf.st_size = 2 * sizeof(dirent);
+    statbuf.st_blocks = (2 * sizeof(unsigned long) + statbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     statbuf.st_mtime = time(&statbuf.st_atime);
     if (mytmpfs_create_stat(&statbuf, NULL, mytmpfs_dt) != 0) {
         goto ex2;
@@ -272,15 +434,15 @@ int main(int argc, char *argv[])
         goto ex3;
     }
     ((unsigned long*)mytmpfs_dt->userdata[0])[0] = 0;
+    ((unsigned long*)mytmpfs_dt->userdata[0])[1] = 0;
 
     d = opendir(argv[argc - 1]);
     if (d == NULL) {
         goto ex3;
     }
-
     for (int i = 0; i < 2; i++) {
         de = readdir(d);
-        void *ptr = (char*)mytmpfs_dt->userdata[0] + sizeof(unsigned long) + ((unsigned long*)mytmpfs_dt->userdata[0])[0];
+        void *ptr = (char*)mytmpfs_dt->userdata[0] + 2 * sizeof(unsigned long) + ((unsigned long*)mytmpfs_dt->userdata[0])[0];
         memcpy(ptr, de, sizeof(dirent));
         if (strcmp(".", de->d_name) == 0) {
             ((struct dirent*)ptr)->d_ino = 1;
