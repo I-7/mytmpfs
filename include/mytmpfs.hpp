@@ -39,12 +39,13 @@ struct mytmpfs_data
 #define DBG //
 #endif
 
-int resolve_path(const char *path, ino_t *inobuf);
+int mytmpfs_resolve_path(const char *path, ino_t *inobuf);
 void* mytmpfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg);
 int mytmpfs_getattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi);
 int mytmpfs_opendir(const char *path, struct fuse_file_info *fi);
 int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags);
 int mytmpfs_releasedir(const char *path, struct fuse_file_info *fi);
 int mytmpfs_mkdir(const char *path, mode_t mode);
+int mytmpfs_rmdir(const char *path);
 
 #endif

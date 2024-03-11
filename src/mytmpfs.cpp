@@ -1,5 +1,5 @@
-#include "mytmpfs.h"
-#include "stat_tree.h"
+#include "mytmpfs.hpp"
+#include "stat_tree.hpp"
 #include <iostream>
 
 static const struct fuse_operations mytmpfs_op = {
@@ -11,7 +11,7 @@ static const struct fuse_operations mytmpfs_op = {
     .init = mytmpfs_init,
 };
 
-int resolve_path(const char *path, ino_t *ino)
+int mytmpfs_resolve_path(const char *path, ino_t *ino)
 {
     *ino = 1;
     dirent* de;
@@ -45,17 +45,17 @@ void* mytmpfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 int mytmpfs_getattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi)
 {
     ino_t ino;
-    if (resolve_path(path, &ino) != 0) {
+    if (mytmpfs_resolve_path(path, &ino) != 0) {
         return -ENOENT;
     }
-    get_stat(ino, statbuf, DATA);
+    mytmpfs_get_stat(ino, statbuf, DATA);
     return 0;
 }
 
 int mytmpfs_opendir(const char *path, struct fuse_file_info *fi)
 {
     ino_t ino;
-    if (resolve_path(path, &ino) != 0) {
+    if (mytmpfs_resolve_path(path, &ino) != 0) {
         return -ENOENT;
     }
     fi->fh = ino;
@@ -91,13 +91,13 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     ppath[lst - path] = '\0';
 
     ino_t ino;
-    if (resolve_path(ppath, &ino) != 0) {
+    if (mytmpfs_resolve_path(ppath, &ino) != 0) {
         free(ppath);
         return -ENOENT;
     }
 
     struct stat ostat, nstat;
-    get_stat(ino, &ostat, DATA);
+    mytmpfs_get_stat(ino, &ostat, DATA);
 
     memcpy(&nstat, &ostat, sizeof(struct stat));
 
@@ -116,7 +116,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     nstat.st_mtime = ostat.st_atime;
 
     ino_t nino;
-    if (create_stat(&nstat, &nino, DATA) != 0) {
+    if (mytmpfs_create_stat(&nstat, &nino, DATA) != 0) {
         free(ppath);
         return -ENOMEM;
     }
@@ -124,7 +124,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     if (nino >= DATA->userdata_count + 1) {
         void **tmp = (void**)realloc(DATA->userdata, 2 * DATA->userdata_count * sizeof(void*));
         if (tmp == NULL) {
-            delete_stat(nino, DATA);
+            mytmpfs_delete_stat(nino, DATA);
             free(ppath);
             return -ENOMEM;
         }
@@ -134,7 +134,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
 
     void *tmp = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
     if (tmp == NULL) {
-        delete_stat(nino, DATA);
+        mytmpfs_delete_stat(nino, DATA);
         free(ppath);
         return -ENOMEM;
     }
@@ -142,7 +142,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     
     DATA->userdata[nino - 1] = (void*)malloc(nstat.st_blocks * BLOCK_SIZE);
     if (DATA->userdata[nino - 1] == NULL) {
-        delete_stat(nino, DATA);
+        mytmpfs_delete_stat(nino, DATA);
         free(ppath);
         ostat.st_size -= sizeof(dirent);
         ostat.st_blocks = (ostat.st_blocks + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -151,7 +151,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     }
     ((unsigned long*)DATA->userdata[nino - 1])[0] = 0;
 
-    set_stat(ino, &ostat, DATA);
+    mytmpfs_set_stat(ino, &ostat, DATA);
 
     dirent *de = (dirent*)((char*)DATA->userdata[ino - 1] + sizeof(unsigned long) + ((unsigned long*)DATA->userdata[ino - 1])[0]);
     memset(de->d_name, 0, sizeof(de->d_name));
@@ -176,6 +176,11 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     return 0;
 }
 
+int mytmpfs_rmdir(const char *path)
+{
+
+}
+
 int main(int argc, char *argv[])
 {
     struct stat statbuf;
@@ -192,7 +197,7 @@ int main(int argc, char *argv[])
     new (&mytmpfs_dt->dbg) std::ofstream("dbglog.txt");
     #endif
 
-    if (init_stat(mytmpfs_dt) != 0) {
+    if (mytmpfs_init_stat(mytmpfs_dt) != 0) {
         goto ex1;
     }
 
@@ -202,7 +207,7 @@ int main(int argc, char *argv[])
     statbuf.st_size = sizeof(unsigned long) + 2 * sizeof(dirent);
     statbuf.st_blocks = (sizeof(unsigned long) + 2 * sizeof(dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE;
     statbuf.st_mtime = time(&statbuf.st_atime);
-    if (create_stat(&statbuf, NULL, mytmpfs_dt) != 0) {
+    if (mytmpfs_create_stat(&statbuf, NULL, mytmpfs_dt) != 0) {
         goto ex2;
     }
 

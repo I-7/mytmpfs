@@ -1,7 +1,7 @@
 #ifndef STAT_TREE_H_
 #define STAT_TREE_H_
 
-#include "mytmpfs.h"
+#include "mytmpfs.hpp"
 
 struct stat_tree_leaf
 {
@@ -30,12 +30,12 @@ struct stat_tree_roots
     void *roots[STATS_ROOTS];
 };
 
-void* allocate_stats_page(mytmpfs_data *data);
-int init_stat(mytmpfs_data *data);
-int create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data);
-int find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, mytmpfs_data *data);
-int get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
-int set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
-void delete_stat(__ino_t ino, mytmpfs_data *data);
+void* mytmpfs_allocate_stats_page(mytmpfs_data *data);
+int mytmpfs_init_stat(mytmpfs_data *data);
+int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data);
+int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, mytmpfs_data *data);
+int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
+int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
+void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data);
 
 #endif

@@ -1,8 +1,8 @@
-#include "stat_tree.h"
+#include "stat_tree.hpp"
 
 // Binomial heap is used to store stats and find them by inode number.
 
-void* allocate_stats_page(mytmpfs_data *data)
+void* mytmpfs_allocate_stats_page(mytmpfs_data *data)
 {
     void* new_page = malloc(BLOCKS_PER_PAGE * BLOCK_SIZE);
     if (new_page == NULL) {
@@ -25,10 +25,10 @@ void* allocate_stats_page(mytmpfs_data *data)
     return new_page;
 }
 
-int init_stat(mytmpfs_data *data)
+int mytmpfs_init_stat(mytmpfs_data *data)
 {
     data->stats_pages_allocated = 0;
-    void* stats_page = allocate_stats_page(data);
+    void* stats_page = mytmpfs_allocate_stats_page(data);
     if (stats_page == nullptr) {
         errno = ENOMEM;
         return -1;
@@ -44,7 +44,7 @@ int init_stat(mytmpfs_data *data)
     return 0;
 }
 
-int create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
+int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
 {
     stat_tree_roots *tree = (stat_tree_roots*)(data->stats_pages[0]);
     unsigned long id_first_empty_root = tree->roots_sz;
@@ -73,7 +73,7 @@ int create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
             tree->roots_sz++;
         }
 
-        void *loc = allocate_stats_page(data);
+        void *loc = mytmpfs_allocate_stats_page(data);
         if (loc == NULL) {
             errno = ENOMEM;
             return -1;
@@ -83,7 +83,7 @@ int create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
         // So no changes would be made in case of unsucessful allocation
         void* nxtpage = nullptr;
         if ((char*)tree->ptr + sizeof(stat_tree_node) * id_first_empty_root > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
-            nxtpage = allocate_stats_page(data);
+            nxtpage = mytmpfs_allocate_stats_page(data);
             if (nxtpage == NULL) {
                 free(loc);
                 errno = ENOMEM;
@@ -154,7 +154,7 @@ int create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
     return 0;
 }
 
-int find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, mytmpfs_data *data)
+int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, mytmpfs_data *data)
 {
     unsigned long x = 1;
 
@@ -208,10 +208,10 @@ int find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, 
     return 0;
 }
 
-int get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
+int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
 {
     struct stat *stat_ptr;
-    if (find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
+    if (mytmpfs_find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
         errno = ENOENT;
         return -1;
     }
@@ -219,10 +219,10 @@ int get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
     return 0;
 }
 
-int set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
+int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
 {
     struct stat *stat_ptr;
-    if (find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
+    if (mytmpfs_find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
         errno = ENOENT;
         return -1;
     }
@@ -230,12 +230,12 @@ int set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
     return 0;
 }
 
-void delete_stat(__ino_t ino, mytmpfs_data *data)
+void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data)
 {
-    if (find_stat_internal(ino, NULL, 0, data) == -1) {
+    if (mytmpfs_find_stat_internal(ino, NULL, 0, data) == -1) {
         return;
     }
-    find_stat_internal(ino, NULL, 1, data);
+    mytmpfs_find_stat_internal(ino, NULL, 1, data);
     return;
 }
 
