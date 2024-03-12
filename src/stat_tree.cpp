@@ -29,7 +29,7 @@ int mytmpfs_init_stat(mytmpfs_data *data)
 {
     data->stats_pages_allocated = 0;
     void* stats_page = mytmpfs_allocate_stats_page(data);
-    if (stats_page == nullptr) {
+    if (stats_page == NULL) {
         errno = ENOMEM;
         return -1;
     }
@@ -94,7 +94,7 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *
         stat_tree_leaf *leaf = (stat_tree_leaf*)loc;
         leaf->type = 1;
         leaf->empty_stats = STATS_PER_PAGE;
-        leaf->empty_stats_loc = UINT64_MAX;
+        leaf->empty_stats_loc = ULONG_MAX;
 
         leaf->empty_stats--;
         leaf->empty_stats_loc ^= 1;
@@ -239,3 +239,10 @@ void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data)
     return;
 }
 
+void mytmpfs_free_stat_pages(mytmpfs_data *data)
+{
+    for (unsigned long i = 0; i < data->stats_pages_allocated; i++) {
+        free(data->stats_pages[i]);
+    }
+    free(data->stats_pages);
+}

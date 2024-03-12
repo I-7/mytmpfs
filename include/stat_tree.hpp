@@ -35,5 +35,6 @@ int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_
 int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
 int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data);
 void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data);
+void mytmpfs_free_stat_pages(mytmpfs_data *data);
 
 #endif

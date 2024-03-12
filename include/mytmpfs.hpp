@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 
 #define BLOCK_SIZE              512
 
@@ -18,6 +19,8 @@
 
 struct mytmpfs_data
 {
+    struct stat root_premount_stat;
+
     unsigned long stats_pages_allocated;
     void **stats_pages;
 
@@ -31,9 +34,13 @@ struct mytmpfs_data
 };
 
 #define DATA ((mytmpfs_data*)(fuse_get_context()->private_data))
+#define USERDATA_SIZE(ino) (((unsigned long*)DATA->userdata[ino - 1])[0])
+#define USERDATA_ACNT(ino) (((unsigned long*)DATA->userdata[ino - 1])[1])
+#define USERDATA_SHIFT (2 * sizeof(unsigned long))
+#define USERDATA_RAW(ino) ((char*)DATA->userdata[ino - 1] + USERDATA_SHIFT)
 
 #ifdef DEBUG
-#define DBG(...) fprintf(DATA->dbg, __VA_ARGS__)
+#define DBG(...) fprintf(DATA->dbg, __VA_ARGS__), fflush(DATA->dbg)
 #else
 #define DBG(...) void(0);
 #endif

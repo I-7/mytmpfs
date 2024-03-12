@@ -1,8 +1,8 @@
 build:
-	g++ -Wall src/mytmpfs.cpp src/stat_tree.cpp `pkg-config fuse3 --cflags --libs` -I include -o mytmpfs
+	g++ -Wall src/mytmpfs.cpp src/stat_tree.cpp -I include `pkg-config fuse3 --cflags --libs` -o mytmpfs
 
 build-debug:
-	g++ -Wall src/mytmpfs.cpp src/stat_tree.cpp -DDEBUG `pkg-config fuse3 --cflags --libs` -I include -o mytmpfs
+	g++ -Wall src/mytmpfs.cpp src/stat_tree.cpp -I include -DDEBUG `pkg-config fuse3 --cflags --libs` -o mytmpfs
 
 mount:
 	./mytmpfs dir
