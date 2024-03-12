@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #define BLOCK_SIZE              512
 
@@ -33,7 +34,7 @@ struct mytmpfs_data
     #endif
 };
 
-#define DATA ((mytmpfs_data*)(fuse_get_context()->private_data))
+#define DATA ((struct mytmpfs_data*)(fuse_get_context()->private_data))
 #define USERDATA_SIZE(ino) (((unsigned long*)DATA->userdata[ino - 1])[0])
 #define USERDATA_ACNT(ino) (((unsigned long*)DATA->userdata[ino - 1])[1])
 #define USERDATA_SHIFT (2 * sizeof(unsigned long))

@@ -1,5 +1,5 @@
-#include "mytmpfs.hpp"
-#include "stat_tree.hpp"
+#include "mytmpfs.h"
+#include "stat_tree.h"
 
 static const struct fuse_operations mytmpfs_op = {
     .getattr = mytmpfs_getattr,
@@ -19,13 +19,14 @@ static const struct fuse_operations mytmpfs_op = {
 int mytmpfs_resolve_path(const char *path, ino_t *ino)
 {
     *ino = 1;
-    dirent* de;
+    struct dirent* de;
     size_t i = 1;
     while (i < strlen(path)) {
-        size_t len = strchrnul(path + i, '/') - (path + i);
+        char* tmp = strchr(path + i, '/');
+        size_t len = (tmp != NULL ? tmp : path + strlen(path)) - (path + i);
         int found = 0;
         for (unsigned long j = 0; j < USERDATA_SIZE(*ino); j += sizeof(struct dirent)) {
-            de = (dirent*)(USERDATA_RAW(*ino) + j);
+            de = (struct dirent*)(USERDATA_RAW(*ino) + j);
             if (memcmp(de->d_name, path + i, len) == 0) {
                 found = 1;
                 *ino = de->d_ino;
@@ -49,21 +50,21 @@ void* mytmpfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
     memcpy(&stbuf, &DATA->root_premount_stat, sizeof(struct stat));
 
     stbuf.st_mtime = time(&stbuf.st_atime);
-    stbuf.st_size = 2 * sizeof(dirent);
+    stbuf.st_size = 2 * sizeof(struct dirent);
     stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     mytmpfs_create_stat(&stbuf, NULL, DATA);
 
-    dirent *de = (dirent*)USERDATA_RAW(1);
+    struct dirent *de = (struct dirent*)USERDATA_RAW(1);
     de->d_ino = 1;
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, ".");
-    USERDATA_SIZE(1) += sizeof(dirent);
+    USERDATA_SIZE(1) += sizeof(struct dirent);
 
     de++;
     de->d_ino = 1; // This won't be used because this leads out of mytmpfs
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, "..");
-    USERDATA_SIZE(1) += sizeof(dirent);
+    USERDATA_SIZE(1) += sizeof(struct dirent);
 
     return (void*)DATA;
 }
@@ -91,7 +92,7 @@ int mytmpfs_opendir(const char *path, struct fuse_file_info *fi)
 
 int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags flags)
 {
-    dirent *de = (dirent*)USERDATA_RAW(fi->fh);
+    struct dirent *de = (struct dirent*)USERDATA_RAW(fi->fh);
 
     struct stat stbuf;
     mytmpfs_get_stat(fi->fh, &stbuf, DATA);
@@ -99,7 +100,7 @@ int mytmpfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t o
     mytmpfs_set_stat(fi->fh, &stbuf, DATA);
 
     for (unsigned long i = 0; i < USERDATA_SIZE(fi->fh); i += sizeof(struct dirent), de++) {
-        if (filler(buf, de->d_name, NULL, 0, fuse_fill_dir_flags()) != 0) {
+        if (filler(buf, de->d_name, NULL, 0, 0) != 0) {
             return -ENOMEM;
         }
     }
@@ -135,14 +136,14 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     memcpy(&nstat, &ostat, sizeof(struct stat));
 
     ostat.st_nlink++;
-    ostat.st_size += sizeof(dirent);
+    ostat.st_size += sizeof(struct dirent);
     ostat.st_blocks = (USERDATA_SHIFT + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     time(&ostat.st_atime);
     ostat.st_mtime = ostat.st_atime;
 
     nstat.st_mode = mode | S_IFDIR;
     nstat.st_nlink = 2;
-    nstat.st_size = 2 * sizeof(dirent);
+    nstat.st_size = 2 * sizeof(struct dirent);
     nstat.st_blocks = (USERDATA_SHIFT + nstat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     nstat.st_ctime = ostat.st_atime;
     nstat.st_atime = ostat.st_atime;
@@ -177,7 +178,7 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
     if (DATA->userdata[nino - 1] == NULL) {
         mytmpfs_delete_stat(nino, DATA);
         free(ppath);
-        ostat.st_size -= sizeof(dirent);
+        ostat.st_size -= sizeof(struct dirent);
         ostat.st_blocks = (USERDATA_SHIFT + ostat.st_blocks + BLOCK_SIZE - 1) / BLOCK_SIZE;
         DATA->userdata[ino - 1] = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
         return -ENOMEM;
@@ -187,23 +188,23 @@ int mytmpfs_mkdir(const char *path, mode_t mode)
 
     mytmpfs_set_stat(ino, &ostat, DATA);
 
-    dirent *de = (dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino));
+    struct dirent *de = (struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino));
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, name);
     de->d_ino = nino;
-    USERDATA_SIZE(ino) += sizeof(dirent);
+    USERDATA_SIZE(ino) += sizeof(struct dirent);
 
-    de = (dirent*)(USERDATA_RAW(nino) + USERDATA_SIZE(nino));
+    de = (struct dirent*)(USERDATA_RAW(nino) + USERDATA_SIZE(nino));
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, ".");
     de->d_ino = nino;
-    USERDATA_SIZE(nino) += sizeof(dirent);
+    USERDATA_SIZE(nino) += sizeof(struct dirent);
 
-    de = (dirent*)(USERDATA_RAW(nino) + USERDATA_SIZE(nino));
+    de = (struct dirent*)(USERDATA_RAW(nino) + USERDATA_SIZE(nino));
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, "..");
     de->d_ino = ino;
-    USERDATA_SIZE(nino) += sizeof(dirent);
+    USERDATA_SIZE(nino) += sizeof(struct dirent);
 
     free(ppath);
 
@@ -224,10 +225,10 @@ int mytmpfs_rmdir(const char *path)
         return -ENOENT;
     }
 
-    dirent *de;
+    struct dirent *de;
     unsigned long res = ULONG_MAX;
     for (unsigned long i = 0; i < USERDATA_SIZE(ino); i += sizeof(struct dirent)) {
-        de = (dirent*)(USERDATA_RAW(ino) + i);
+        de = (struct dirent*)(USERDATA_RAW(ino) + i);
         if (strcmp(name, de->d_name) == 0) {
             res = i;
             break;
@@ -237,7 +238,7 @@ int mytmpfs_rmdir(const char *path)
         return -ENOENT;
     }
 
-    unsigned long cnt = (USERDATA_SIZE(de->d_ino)) / sizeof(dirent);
+    unsigned long cnt = (USERDATA_SIZE(de->d_ino)) / sizeof(struct dirent);
     if (cnt != 2) {
         return -ENOTEMPTY;
     }
@@ -255,11 +256,11 @@ int mytmpfs_rmdir(const char *path)
     stbuf.st_mtime = stbuf.st_atime;
     stbuf.st_nlink--;
 
-    memcpy(USERDATA_RAW(ino) + res, USERDATA_RAW(ino) + res + sizeof(dirent), USERDATA_SIZE(ino) - res);
+    memcpy(USERDATA_RAW(ino) + res, USERDATA_RAW(ino) + res + sizeof(struct dirent), USERDATA_SIZE(ino) - res);
     
-    stbuf.st_size -= sizeof(dirent);
+    stbuf.st_size -= sizeof(struct dirent);
     stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    USERDATA_SIZE(ino) -= sizeof(dirent);
+    USERDATA_SIZE(ino) -= sizeof(struct dirent);
     DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
 
     mytmpfs_set_stat(ino, &stbuf, DATA);
@@ -354,7 +355,7 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
     memcpy(&nstat, &ostat, sizeof(struct stat));
 
     ostat.st_nlink++;
-    ostat.st_size += sizeof(dirent);
+    ostat.st_size += sizeof(struct dirent);
     ostat.st_blocks = (USERDATA_SHIFT + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     time(&ostat.st_atime);
     ostat.st_mtime = ostat.st_atime;
@@ -397,7 +398,7 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
     if (DATA->userdata[nino - 1] == NULL) {
         mytmpfs_delete_stat(nino, DATA);
         free(ppath);
-        ostat.st_size -= sizeof(dirent);
+        ostat.st_size -= sizeof(struct dirent);
         ostat.st_blocks = (USERDATA_SHIFT + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
         DATA->userdata[ino - 1] = (void*)realloc(DATA->userdata[ino - 1], ostat.st_blocks * BLOCK_SIZE);
         return -ENOMEM;
@@ -407,11 +408,11 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 
     mytmpfs_set_stat(ino, &ostat, DATA);
 
-    dirent *de = (dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino));
+    struct dirent *de = (struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino));
     memset(de->d_name, 0, sizeof(de->d_name));
     strcpy(de->d_name, name);
     de->d_ino = nino;
-    USERDATA_SIZE(ino) += sizeof(dirent);
+    USERDATA_SIZE(ino) += sizeof(struct dirent);
 
     free(ppath);
 
@@ -420,7 +421,7 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 
 int main(int argc, char *argv[])
 {
-    mytmpfs_data *mytmpfs_dt = (mytmpfs_data*)malloc(sizeof(mytmpfs_data));
+    struct mytmpfs_data *mytmpfs_dt = (struct mytmpfs_data*)malloc(sizeof(struct mytmpfs_data));
 
     if (mytmpfs_dt == NULL) {
         return 1;
@@ -452,14 +453,14 @@ int main(int argc, char *argv[])
         free(mytmpfs_dt);
         return 1;
     }
-    if ((mytmpfs_dt->userdata[0] = (void*)malloc((USERDATA_SHIFT + 2 * sizeof(dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE)) == NULL) {
+    if ((mytmpfs_dt->userdata[0] = (void*)malloc((USERDATA_SHIFT + 2 * sizeof(struct dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE * BLOCK_SIZE)) == NULL) {
         printf("Unable to allocate the minimal memory required\n");
         free(mytmpfs_dt->userdata);
         mytmpfs_free_stat_pages(mytmpfs_dt);
         free(mytmpfs_dt);
         return 1;
     }
-    mytmpfs_dt->userdata_blocks_allocated = (USERDATA_SHIFT + 2 * sizeof(dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    mytmpfs_dt->userdata_blocks_allocated = (USERDATA_SHIFT + 2 * sizeof(struct dirent) + BLOCK_SIZE - 1) / BLOCK_SIZE;
     mytmpfs_dt->userdata_count = 1;
 
     return fuse_main(argc, argv, &mytmpfs_op, (void*)mytmpfs_dt);

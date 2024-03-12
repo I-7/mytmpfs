@@ -1,8 +1,8 @@
-#include "stat_tree.hpp"
+#include "stat_tree.h"
 
 // Binomial heap is used to store stats and find them by inode number.
 
-void* mytmpfs_allocate_stats_page(mytmpfs_data *data)
+void* mytmpfs_allocate_stats_page(struct mytmpfs_data *data)
 {
     void* new_page = malloc(BLOCKS_PER_PAGE * BLOCK_SIZE);
     if (new_page == NULL) {
@@ -25,7 +25,7 @@ void* mytmpfs_allocate_stats_page(mytmpfs_data *data)
     return new_page;
 }
 
-int mytmpfs_init_stat(mytmpfs_data *data)
+int mytmpfs_init_stat(struct mytmpfs_data *data)
 {
     data->stats_pages_allocated = 0;
     void* stats_page = mytmpfs_allocate_stats_page(data);
@@ -34,9 +34,9 @@ int mytmpfs_init_stat(mytmpfs_data *data)
         return -1;
     }
 
-    stat_tree_roots *tree = (stat_tree_roots*)stats_page;
+    struct stat_tree_roots *tree = (struct stat_tree_roots*)stats_page;
     tree->roots_sz = 0;
-    tree->ptr = (char*)stats_page + sizeof(stat_tree_roots);
+    tree->ptr = (char*)stats_page + sizeof(struct stat_tree_roots);
     for (unsigned long i = 0; i < STATS_ROOTS; i++) {
         tree->roots[i] = NULL;
     }
@@ -44,16 +44,16 @@ int mytmpfs_init_stat(mytmpfs_data *data)
     return 0;
 }
 
-int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *data)
+int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, struct mytmpfs_data *data)
 {
-    stat_tree_roots *tree = (stat_tree_roots*)(data->stats_pages[0]);
+    struct stat_tree_roots *tree = (struct stat_tree_roots*)(data->stats_pages[0]);
     unsigned long id_first_empty_root = tree->roots_sz;
     unsigned long id_place = tree->roots_sz;
 
     unsigned long res = 1;
     for (unsigned long i = 0; i < tree->roots_sz; i++) {
         if (tree->roots[i] != NULL) {
-            if (((stat_tree_node*)(tree->roots[i]))->empty_stats > 0) {
+            if (((struct stat_tree_node*)(tree->roots[i]))->empty_stats > 0) {
                 id_place = i;
             }
         } else {
@@ -81,8 +81,8 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *
 
         // We won't allocate more than 1 page for the path, so we can do it beforehands
         // So no changes would be made in case of unsucessful allocation
-        void* nxtpage = nullptr;
-        if ((char*)tree->ptr + sizeof(stat_tree_node) * id_first_empty_root > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
+        void* nxtpage = NULL;
+        if ((char*)tree->ptr + sizeof(struct stat_tree_node) * id_first_empty_root > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
             nxtpage = mytmpfs_allocate_stats_page(data);
             if (nxtpage == NULL) {
                 free(loc);
@@ -91,7 +91,7 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *
             }
         }
 
-        stat_tree_leaf *leaf = (stat_tree_leaf*)loc;
+        struct stat_tree_leaf *leaf = (struct stat_tree_leaf*)loc;
         leaf->type = 1;
         leaf->empty_stats = STATS_PER_PAGE;
         leaf->empty_stats_loc = ULONG_MAX;
@@ -100,23 +100,23 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *
         leaf->empty_stats_loc ^= 1;
         memcpy((void*)(&leaf->stats[0]), statbuf, sizeof(struct stat));
         leaf->stats[0].st_ino = res;
-        if (ino != nullptr) {
+        if (ino != NULL) {
             *ino = res;
         }
 
         for (unsigned int i = 0; i < id_first_empty_root; i++) {
-            if ((char*)tree->ptr + sizeof(stat_tree_node) > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
+            if ((char*)tree->ptr + sizeof(struct stat_tree_node) > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
                 tree->ptr = nxtpage;
                 tree->lptr = nxtpage;
             }
-            stat_tree_node *new_node = (stat_tree_node*)tree->ptr;
+            struct stat_tree_node *new_node = (struct stat_tree_node*)tree->ptr;
             new_node->type = 0;
             new_node->left_child = tree->roots[i];
             new_node->right_child = loc;
             new_node->empty_stats = STATS_PER_PAGE - 1;
             tree->roots[i] = NULL;
             loc = tree->ptr;
-            tree->ptr = (char*)tree->ptr + sizeof(stat_tree_node);
+            tree->ptr = (char*)tree->ptr + sizeof(struct stat_tree_node);
         }
         tree->roots[id_first_empty_root] = loc;
 
@@ -129,36 +129,36 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, mytmpfs_data *
         }
     }
 
-    stat_tree_node *node = (stat_tree_node*)(tree->roots[id_place]);
+    struct stat_tree_node *node = (struct stat_tree_node*)(tree->roots[id_place]);
     while (!STAT_TREE_NODE_LEAF(*node)) {
         id_place--;
         node->empty_stats--;
-        if (((stat_tree_node*)(node->left_child))->empty_stats > 0) {
-            node = (stat_tree_node*)(node->left_child);
+        if (((struct stat_tree_node*)(node->left_child))->empty_stats > 0) {
+            node = (struct stat_tree_node*)(node->left_child);
         } else {
-            node = (stat_tree_node*)(node->right_child);
+            node = (struct stat_tree_node*)(node->right_child);
             res += (1ll << id_place) * STATS_PER_PAGE;
         }
     }
 
-    stat_tree_leaf *leaf = (stat_tree_leaf*)node;
+    struct stat_tree_leaf *leaf = (struct stat_tree_leaf*)node;
     unsigned long x = ffsl(leaf->empty_stats_loc) - 1;
     leaf->empty_stats_loc ^= 1ll << x;
     leaf->empty_stats--;
     memcpy(&leaf->stats[x], statbuf, sizeof(struct stat));
     res += x;
     leaf->stats[x].st_ino = res;
-    if (ino != nullptr) {
+    if (ino != NULL) {
         *ino = res;
     }
     return 0;
 }
 
-int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, mytmpfs_data *data)
+int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_delete, struct mytmpfs_data *data)
 {
     unsigned long x = 1;
 
-    stat_tree_roots *tree = (stat_tree_roots*)(data->stats_pages[0]);
+    struct stat_tree_roots *tree = (struct stat_tree_roots*)(data->stats_pages[0]);
     unsigned long id = tree->roots_sz;
 
     while (id > 0) {
@@ -178,21 +178,21 @@ int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_
 
     id--;
 
-    stat_tree_node *node = (stat_tree_node*)(tree->roots[id]);
+    struct stat_tree_node *node = (struct stat_tree_node*)(tree->roots[id]);
     while (!STAT_TREE_NODE_LEAF(*node)) {
         if (is_delete) {
             node->empty_stats++;
         }
         if (x + (1ll << (id - 1)) * STATS_PER_PAGE <= ino) {
             x += (1ll << (id - 1)) * STATS_PER_PAGE;
-            node = (stat_tree_node*)(node->right_child);
+            node = (struct stat_tree_node*)(node->right_child);
         } else {
-            node = (stat_tree_node*)(node->left_child);
+            node = (struct stat_tree_node*)(node->left_child);
         }
         id--;
     }
 
-    stat_tree_leaf *leaf = (stat_tree_leaf*)(node);
+    struct stat_tree_leaf *leaf = (struct stat_tree_leaf*)(node);
     if (is_delete) {
         node->empty_stats++;
     }
@@ -208,7 +208,7 @@ int mytmpfs_find_stat_internal(__ino_t ino, struct stat **statbuf, const int is_
     return 0;
 }
 
-int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
+int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, struct mytmpfs_data *data)
 {
     struct stat *stat_ptr;
     if (mytmpfs_find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
@@ -219,7 +219,7 @@ int mytmpfs_get_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
     return 0;
 }
 
-int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
+int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, struct mytmpfs_data *data)
 {
     struct stat *stat_ptr;
     if (mytmpfs_find_stat_internal(ino, &stat_ptr, 0, data) == -1) {
@@ -230,7 +230,7 @@ int mytmpfs_set_stat(__ino_t ino, struct stat *statbuf, mytmpfs_data *data)
     return 0;
 }
 
-void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data)
+void mytmpfs_delete_stat(__ino_t ino, struct mytmpfs_data *data)
 {
     if (mytmpfs_find_stat_internal(ino, NULL, 0, data) == -1) {
         return;
@@ -239,7 +239,7 @@ void mytmpfs_delete_stat(__ino_t ino, mytmpfs_data *data)
     return;
 }
 
-void mytmpfs_free_stat_pages(mytmpfs_data *data)
+void mytmpfs_free_stat_pages(struct mytmpfs_data *data)
 {
     for (unsigned long i = 0; i < data->stats_pages_allocated; i++) {
         free(data->stats_pages[i]);
