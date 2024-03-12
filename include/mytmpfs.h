@@ -43,7 +43,7 @@ struct mytmpfs_data
 #ifdef DEBUG
 #define DBG(...) fprintf(DATA->dbg, __VA_ARGS__), fflush(DATA->dbg)
 #else
-#define DBG(...) void(0);
+#define DBG(...) 0
 #endif
 
 int mytmpfs_resolve_path(const char *path, ino_t *inobuf);
@@ -59,5 +59,6 @@ int mytmpfs_release(const char *path, struct fuse_file_info *fi);
 int mytmpfs_read(const char *path, char *buf, size_t len, off_t offset, struct fuse_file_info *fi);
 int mytmpfs_write(const char *path, const char *buf, size_t len, off_t offset, struct fuse_file_info *fi);
 int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev);
+int mytmpfs_unlink(const char *path);
 
 #endif

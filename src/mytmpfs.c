@@ -5,6 +5,7 @@ static const struct fuse_operations mytmpfs_op = {
     .getattr = mytmpfs_getattr,
     .mknod = mytmpfs_mknod,
     .mkdir = mytmpfs_mkdir,
+    .unlink = mytmpfs_unlink,
     .rmdir = mytmpfs_rmdir,
     .open = mytmpfs_open,
     .read = mytmpfs_read,
@@ -416,6 +417,57 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 
     free(ppath);
 
+    return 0;
+}
+
+int mytmpfs_unlink(const char *path)
+{
+    const char *lst = strrchr(path, '/');
+    const char *name = lst + 1;
+    char *ppath = (char*)malloc(lst - path + 1);
+    memcpy(ppath, path, lst - path);
+    ppath[lst - path] = '\0';
+
+    ino_t ino;
+    if (mytmpfs_resolve_path(ppath, &ino) != 0) {
+        free(ppath);
+        return -ENOENT;
+    }
+
+    struct dirent *de;
+    unsigned long res = ULONG_MAX;
+    for (unsigned long i = 0; i < USERDATA_SIZE(ino); i += sizeof(struct dirent)) {
+        de = (struct dirent*)(USERDATA_RAW(ino) + i);
+        if (strcmp(name, de->d_name) == 0) {
+            res = i;
+            break;
+        }
+    }
+    if (res == ULONG_MAX) {
+        return -ENOENT;
+    }
+
+    if (USERDATA_ACNT(de->d_ino) != 0) {
+        return -EBUSY;
+    }
+
+    free(DATA->userdata[de->d_ino - 1]);
+    mytmpfs_delete_stat(de->d_ino, DATA);
+
+    struct stat stbuf;
+    mytmpfs_get_stat(ino, &stbuf, DATA);
+    time(&stbuf.st_atime);
+    stbuf.st_mtime = stbuf.st_atime;
+    stbuf.st_nlink--;
+
+    memcpy(USERDATA_RAW(ino) + res, USERDATA_RAW(ino) + res + sizeof(struct dirent), USERDATA_SIZE(ino) - res);
+    
+    stbuf.st_size -= sizeof(struct dirent);
+    stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    USERDATA_SIZE(ino) -= sizeof(struct dirent);
+    DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
+
+    mytmpfs_set_stat(ino, &stbuf, DATA);
     return 0;
 }
 
