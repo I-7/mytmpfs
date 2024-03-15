@@ -7,6 +7,7 @@ static const struct fuse_operations mytmpfs_op = {
     .mkdir = mytmpfs_mkdir,
     .unlink = mytmpfs_unlink,
     .rmdir = mytmpfs_rmdir,
+    .rename = mytmpfs_rename,
     .open = mytmpfs_open,
     .read = mytmpfs_read,
     .write = mytmpfs_write,
@@ -17,7 +18,7 @@ static const struct fuse_operations mytmpfs_op = {
     .init = mytmpfs_init,
 };
 
-int mytmpfs_resolve_path(const char *path, ino_t *ino)
+inline int mytmpfs_resolve_path(const char *path, ino_t *ino)
 {
     *ino = 1;
     struct dirent* de;
@@ -28,7 +29,7 @@ int mytmpfs_resolve_path(const char *path, ino_t *ino)
         int found = 0;
         for (unsigned long j = 0; j < USERDATA_SIZE(*ino); j += sizeof(struct dirent)) {
             de = (struct dirent*)(USERDATA_RAW(*ino) + j);
-            if (memcmp(de->d_name, path + i, len) == 0) {
+            if (len == strlen(de->d_name) && memcmp(de->d_name, path + i, len) == 0) {
                 found = 1;
                 *ino = de->d_ino;
                 break;
@@ -40,6 +41,63 @@ int mytmpfs_resolve_path(const char *path, ino_t *ino)
         }
         i += len + 1;
     }
+    return 0;
+}
+
+inline int mytmpfs_create_dirent(const ino_t ino, const ino_t itemino, const char *path)
+{
+    struct stat stbuf;
+    if (mytmpfs_get_stat(ino, &stbuf, DATA) != 0) {
+        return -1;
+    }
+    stbuf.st_size += sizeof(struct dirent);
+
+    if (stbuf.st_blocks < (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE) {
+        void* tmp = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
+        if (tmp == NULL) {
+            errno = ENOMEM;
+            return -1;
+        }
+        DATA->userdata[ino - 1] = tmp;
+        stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    }
+    
+    stbuf.st_mtime = time(&stbuf.st_atime);
+    ((struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino)))->d_ino = itemino;
+    memset(((struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino)))->d_name, 0, 
+            sizeof(((struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino)))->d_name));
+    strcpy(((struct dirent*)(USERDATA_RAW(ino) + USERDATA_SIZE(ino)))->d_name, path);
+    USERDATA_SIZE(ino) += sizeof(struct dirent);
+    mytmpfs_set_stat(ino, &stbuf, DATA);
+    return 0;
+}
+
+inline int mytmpfs_remove_dirent(const ino_t ino, unsigned long offset)
+{
+    struct stat stbuf;
+    if (mytmpfs_get_stat(ino, &stbuf, DATA) != 0) {
+        return -1;
+    }
+    if (offset >= USERDATA_SIZE(ino)) {
+        errno = EINVAL;
+        return -1;
+    }
+    stbuf.st_mtime = time(&stbuf.st_atime);
+
+    memcpy(USERDATA_RAW(ino) + offset, USERDATA_RAW(ino) + offset + sizeof(struct dirent), USERDATA_SIZE(ino) - offset - sizeof(struct dirent));
+    stbuf.st_size -= sizeof(struct dirent);
+    USERDATA_SIZE(ino) -= sizeof(struct dirent);
+
+    if (stbuf.st_blocks != (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE) {
+        void* tmp = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
+        if (tmp == NULL) {
+            mytmpfs_set_stat(ino, &stbuf, DATA);
+            return 0;
+        }
+        DATA->userdata[ino - 1] = tmp;
+        stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    }
+    mytmpfs_set_stat(ino, &stbuf, DATA);
     return 0;
 }
 
@@ -72,10 +130,14 @@ void* mytmpfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
 int mytmpfs_getattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi)
 {
+    DBG("Getattr %s\n", path);
+
     ino_t ino;
     if (mytmpfs_resolve_path(path, &ino) != 0) {
         return -ENOENT;
     }
+    DBG("Getattr resolved %s\n", path);
+
     mytmpfs_get_stat(ino, statbuf, DATA);
     return 0;
 }
@@ -225,6 +287,7 @@ int mytmpfs_rmdir(const char *path)
         free(ppath);
         return -ENOENT;
     }
+    free(ppath);
 
     struct dirent *de;
     unsigned long res = ULONG_MAX;
@@ -251,20 +314,7 @@ int mytmpfs_rmdir(const char *path)
     free(DATA->userdata[de->d_ino - 1]);
     mytmpfs_delete_stat(de->d_ino, DATA);
 
-    struct stat stbuf;
-    mytmpfs_get_stat(ino, &stbuf, DATA);
-    time(&stbuf.st_atime);
-    stbuf.st_mtime = stbuf.st_atime;
-    stbuf.st_nlink--;
-
-    memcpy(USERDATA_RAW(ino) + res, USERDATA_RAW(ino) + res + sizeof(struct dirent), USERDATA_SIZE(ino) - res);
-    
-    stbuf.st_size -= sizeof(struct dirent);
-    stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    USERDATA_SIZE(ino) -= sizeof(struct dirent);
-    DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
-
-    mytmpfs_set_stat(ino, &stbuf, DATA);
+    mytmpfs_remove_dirent(ino, res);
     return 0;
 }
 
@@ -338,6 +388,8 @@ int mytmpfs_release(const char *path, struct fuse_file_info *fi)
 
 int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 {
+    DBG("Create file %s\n", path);
+
     const char *lst = strrchr(path, '/');
     const char *name = lst + 1;
     char *ppath = (char*)malloc(lst - path + 1);
@@ -355,7 +407,6 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 
     memcpy(&nstat, &ostat, sizeof(struct stat));
 
-    ostat.st_nlink++;
     ostat.st_size += sizeof(struct dirent);
     ostat.st_blocks = (USERDATA_SHIFT + ostat.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
     time(&ostat.st_atime);
@@ -433,6 +484,7 @@ int mytmpfs_unlink(const char *path)
         free(ppath);
         return -ENOENT;
     }
+    free(ppath);
 
     struct dirent *de;
     unsigned long res = ULONG_MAX;
@@ -447,28 +499,141 @@ int mytmpfs_unlink(const char *path)
         return -ENOENT;
     }
 
-    if (USERDATA_ACNT(de->d_ino) != 0) {
-        return -EBUSY;
+    struct stat filestat;
+    mytmpfs_get_stat(de->d_ino, &filestat, DATA);
+    DBG("!!!!\n");
+    filestat.st_nlink--;
+    if (filestat.st_nlink == 0) {
+        if (USERDATA_ACNT(de->d_ino) != 0) {
+            return -EBUSY;
+        }
+        free(DATA->userdata[de->d_ino - 1]);
+        mytmpfs_delete_stat(de->d_ino, DATA);
+    } else {
+        mytmpfs_set_stat(de->d_ino, &filestat, DATA);
     }
 
-    free(DATA->userdata[de->d_ino - 1]);
-    mytmpfs_delete_stat(de->d_ino, DATA);
-
-    struct stat stbuf;
-    mytmpfs_get_stat(ino, &stbuf, DATA);
-    time(&stbuf.st_atime);
-    stbuf.st_mtime = stbuf.st_atime;
-    stbuf.st_nlink--;
-
-    memcpy(USERDATA_RAW(ino) + res, USERDATA_RAW(ino) + res + sizeof(struct dirent), USERDATA_SIZE(ino) - res);
-    
-    stbuf.st_size -= sizeof(struct dirent);
-    stbuf.st_blocks = (USERDATA_SHIFT + stbuf.st_size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    USERDATA_SIZE(ino) -= sizeof(struct dirent);
-    DATA->userdata[ino - 1] = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * BLOCK_SIZE);
-
-    mytmpfs_set_stat(ino, &stbuf, DATA);
+    mytmpfs_remove_dirent(ino, res);
     return 0;
+}
+
+int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
+{
+    DBG("rename enter\n");
+
+    const char *lst = strrchr(path, '/');
+    const char *name = lst + 1;
+    char *ppath = (char*)malloc(lst - path + 1);
+    memcpy(ppath, path, lst - path);
+    ppath[lst - path] = '\0';
+
+    ino_t dirino;
+    if (mytmpfs_resolve_path(ppath, &dirino) != 0) {
+        return -ENOENT;
+    }
+
+    struct dirent *de;
+    unsigned long res = ULONG_MAX;
+    ino_t ino;
+    for (unsigned long i = 0; i < USERDATA_SIZE(dirino); i += sizeof(struct dirent)) {
+        de = (struct dirent*)(USERDATA_RAW(dirino) + i);
+        if (strcmp(name, de->d_name) == 0) {
+            ino = de->d_ino;
+            res = i;
+            break;
+        }
+    }
+    if (res == ULONG_MAX) {
+        return -ENOENT;
+    }
+
+    DBG("hhhh\n");
+
+    const char *nlst = strrchr(newpath, '/');
+    const char *nname = nlst + 1;
+    char *pnpath = (char*)malloc(nlst - newpath + 1);
+    memcpy(pnpath, newpath, nlst - newpath);
+    pnpath[nlst - newpath] = '\0';
+    
+    ino_t ndirino;
+    if (mytmpfs_resolve_path(pnpath, &ndirino) != 0) {
+        return -ENOENT;
+    }
+
+    char *newpathpar = malloc(3 * strlen(newpath));
+    memset(newpathpar, 0, 3 * strlen(newpath));
+    strcpy(newpathpar, newpath);
+    ino_t tmp;
+    DBG("heheheheheh\n");
+    for (unsigned int pos = strlen(newpath); ; pos += 3) {
+        newpathpar[pos] = '/';
+        newpathpar[pos + 1] = '.';
+        newpathpar[pos + 2] = '.';
+        mytmpfs_resolve_path(newpathpar, &tmp);
+        DBG("%s %ld===\n", newpathpar, tmp);
+        if (tmp == ino) {
+            return -EINVAL;
+        }
+        if (tmp == 1) {
+            break;
+        }
+    }
+
+    DBG("575\n");
+
+    unsigned long nres = ULONG_MAX;
+    ino_t nino;
+    for (unsigned long i = 0; i < USERDATA_SIZE(ndirino); i += sizeof(struct dirent)) {
+        de = (struct dirent*)(USERDATA_RAW(ndirino) + i);
+        if (strcmp(nname, de->d_name) == 0) {
+            nino = de->d_ino;
+            nres = i;
+            break;
+        }
+    }
+
+    if (nres != ULONG_MAX && (flags & RENAME_NOREPLACE)) {
+        DBG("----\n");
+        return -EEXIST;
+    }
+
+    DBG("!!!!!\n");
+    DBG("%ld %ld\n", res, nres);
+    DBG("%s %s\n", name, nname);
+    DBG("%s %s\n", ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_name, ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_name);
+    DBG("!!!!!\n");
+
+    struct stat statbuf;
+    mytmpfs_get_stat(ino, &statbuf, DATA);
+
+    /* todo
+    if ((statbuf.st_mode & S_IFMT) == S_IFDIR) {
+        if (nres != 0) {
+            if (USERDATA_SIZE(nino) != 2 * sizeof(struct dirent)) {
+                return -EEXIST;
+            }
+        }
+
+    }
+    */
+
+    if ((statbuf.st_mode & S_IFMT) == S_IFREG) {
+        if (nres != ULONG_MAX) {
+            if (flags & RENAME_EXCHANGE) {
+                ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_ino = nino;
+                ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
+                return 0;
+            }
+            mytmpfs_remove_dirent(dirino, res);
+            ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
+            return 0;
+        }
+        mytmpfs_remove_dirent(dirino, res);
+        mytmpfs_create_dirent(ndirino, ino, nname);
+        return 0;
+    }
+
+    return -ENOSYS;
 }
 
 int main(int argc, char *argv[])
