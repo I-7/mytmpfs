@@ -130,14 +130,10 @@ void* mytmpfs_init(struct fuse_conn_info *conn, struct fuse_config *cfg)
 
 int mytmpfs_getattr(const char *path, struct stat *statbuf, struct fuse_file_info *fi)
 {
-    DBG("Getattr %s\n", path);
-
     ino_t ino;
     if (mytmpfs_resolve_path(path, &ino) != 0) {
         return -ENOENT;
     }
-    DBG("Getattr resolved %s\n", path);
-
     mytmpfs_get_stat(ino, statbuf, DATA);
     return 0;
 }
@@ -388,8 +384,6 @@ int mytmpfs_release(const char *path, struct fuse_file_info *fi)
 
 int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev)
 {
-    DBG("Create file %s\n", path);
-
     const char *lst = strrchr(path, '/');
     const char *name = lst + 1;
     char *ppath = (char*)malloc(lst - path + 1);
@@ -501,7 +495,6 @@ int mytmpfs_unlink(const char *path)
 
     struct stat filestat;
     mytmpfs_get_stat(de->d_ino, &filestat, DATA);
-    DBG("!!!!\n");
     filestat.st_nlink--;
     if (filestat.st_nlink == 0) {
         if (USERDATA_ACNT(de->d_ino) != 0) {
@@ -519,8 +512,6 @@ int mytmpfs_unlink(const char *path)
 
 int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
 {
-    DBG("rename enter\n");
-
     const char *lst = strrchr(path, '/');
     const char *name = lst + 1;
     char *ppath = (char*)malloc(lst - path + 1);
@@ -547,8 +538,6 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
         return -ENOENT;
     }
 
-    DBG("hhhh\n");
-
     const char *nlst = strrchr(newpath, '/');
     const char *nname = nlst + 1;
     char *pnpath = (char*)malloc(nlst - newpath + 1);
@@ -564,13 +553,11 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
     memset(newpathpar, 0, 3 * strlen(newpath));
     strcpy(newpathpar, newpath);
     ino_t tmp;
-    DBG("heheheheheh\n");
     for (unsigned int pos = strlen(newpath); ; pos += 3) {
         newpathpar[pos] = '/';
         newpathpar[pos + 1] = '.';
         newpathpar[pos + 2] = '.';
         mytmpfs_resolve_path(newpathpar, &tmp);
-        DBG("%s %ld===\n", newpathpar, tmp);
         if (tmp == ino) {
             return -EINVAL;
         }
@@ -578,8 +565,6 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
             break;
         }
     }
-
-    DBG("575\n");
 
     unsigned long nres = ULONG_MAX;
     ino_t nino;
@@ -593,29 +578,35 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
     }
 
     if (nres != ULONG_MAX && (flags & RENAME_NOREPLACE)) {
-        DBG("----\n");
         return -EEXIST;
     }
-
-    DBG("!!!!!\n");
-    DBG("%ld %ld\n", res, nres);
-    DBG("%s %s\n", name, nname);
-    DBG("%s %s\n", ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_name, ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_name);
-    DBG("!!!!!\n");
 
     struct stat statbuf;
     mytmpfs_get_stat(ino, &statbuf, DATA);
 
-    /* todo
     if ((statbuf.st_mode & S_IFMT) == S_IFDIR) {
-        if (nres != 0) {
+        if (nres != ULONG_MAX) {
             if (USERDATA_SIZE(nino) != 2 * sizeof(struct dirent)) {
                 return -EEXIST;
             }
+            struct stat tmp;
+            mytmpfs_get_stat(nino, &tmp, DATA);
+            if ((tmp.st_mode & S_IFMT) != S_IFDIR) {
+                return -ENOTDIR;
+            }
+            if (flags & RENAME_EXCHANGE) {
+                ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_ino = nino;
+                ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
+                return 0;
+            }
+            mytmpfs_remove_dirent(dirino, res);
+            ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
+            return 0;
         }
-
+        mytmpfs_remove_dirent(dirino, res);
+        mytmpfs_create_dirent(ndirino, ino, nname);
+        return 0;
     }
-    */
 
     if ((statbuf.st_mode & S_IFMT) == S_IFREG) {
         if (nres != ULONG_MAX) {
