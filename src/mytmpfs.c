@@ -783,9 +783,9 @@ int mytmpfs_utimens(const char *path, const struct timespec tv[2], struct fuse_f
         stbuf.st_atim = tv[0];
     }
     if (tv[1].tv_nsec == UTIME_NOW) {
-        time(&stbuf.st_atime);
+        time(&stbuf.st_mtime);
     } else if (tv[1].tv_nsec != UTIME_OMIT) {
-        stbuf.st_atim = tv[1];
+        stbuf.st_mtim = tv[1];
     }
     mytmpfs_set_stat(ino, &stbuf, DATA);
     return 0;
