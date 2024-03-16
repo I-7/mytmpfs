@@ -17,6 +17,7 @@ static const struct fuse_operations mytmpfs_op = {
     .readdir = mytmpfs_readdir,
     .releasedir = mytmpfs_releasedir,
     .init = mytmpfs_init,
+    .destroy = mytmpfs_destroy
 };
 
 inline int mytmpfs_resolve_path(const char *path, ino_t *ino)
@@ -730,6 +731,19 @@ int mytmpfs_link(const char *path, const char *newpath)
     stbuf.st_nlink++;
     mytmpfs_set_stat(ino, &stbuf, DATA);
     return 0;
+}
+
+void mytmpfs_destroy(void *private_data)
+{
+    struct mytmpfs_data *mytmpfs_dt = (struct mytmpfs_data*)private_data;
+    for (unsigned long i = 0; i < mytmpfs_dt->stats_pages_allocated; i++) {
+        free(mytmpfs_dt->stats_pages[i]);
+    }
+    free(mytmpfs_dt->stats_pages);
+    for (unsigned long i = 0; i < mytmpfs_dt->userdata_count; i++) {
+        free(mytmpfs_dt->userdata[i]);
+    }
+    free(mytmpfs_dt->userdata);
 }
 
 int main(int argc, char *argv[])

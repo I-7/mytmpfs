@@ -65,5 +65,6 @@ int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev);
 int mytmpfs_unlink(const char *path);
 int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags);
 int mytmpfs_link(const char *path, const char *newpath);
+void mytmpfs_destroy(void *private_data);
 
 #endif
