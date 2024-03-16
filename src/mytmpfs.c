@@ -54,7 +54,7 @@ inline int mytmpfs_create_dirent(const ino_t ino, const ino_t itemino, const cha
     stbuf.st_size += sizeof(struct dirent);
 
     if (stbuf.st_blocks < (USERDATA_SHIFT + stbuf.st_size + MYTMPFS_BLOCK_SIZE - 1) / MYTMPFS_BLOCK_SIZE) {
-        void* tmp = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * MYTMPFS_BLOCK_SIZE);
+        void* tmp = realloc(DATA->userdata[ino - 1], (USERDATA_SHIFT + stbuf.st_size + MYTMPFS_BLOCK_SIZE - 1) / MYTMPFS_BLOCK_SIZE * MYTMPFS_BLOCK_SIZE);
         if (tmp == NULL) {
             errno = ENOMEM;
             return -1;
@@ -88,9 +88,8 @@ inline int mytmpfs_remove_dirent(const ino_t ino, unsigned long offset)
     memcpy(USERDATA_RAW(ino) + offset, USERDATA_RAW(ino) + offset + sizeof(struct dirent), USERDATA_SIZE(ino) - offset - sizeof(struct dirent));
     stbuf.st_size -= sizeof(struct dirent);
     USERDATA_SIZE(ino) -= sizeof(struct dirent);
-
     if (stbuf.st_blocks != (USERDATA_SHIFT + stbuf.st_size + MYTMPFS_BLOCK_SIZE - 1) / MYTMPFS_BLOCK_SIZE) {
-        void* tmp = realloc(DATA->userdata[ino - 1], stbuf.st_blocks * MYTMPFS_BLOCK_SIZE);
+        void* tmp = realloc(DATA->userdata[ino - 1], (USERDATA_SHIFT + stbuf.st_size + MYTMPFS_BLOCK_SIZE - 1) / MYTMPFS_BLOCK_SIZE * MYTMPFS_BLOCK_SIZE);
         if (tmp == NULL) {
             mytmpfs_set_stat(ino, &stbuf, DATA);
             return 0;
@@ -311,6 +310,11 @@ int mytmpfs_rmdir(const char *path)
     free(DATA->userdata[de->d_ino - 1]);
     mytmpfs_delete_stat(de->d_ino, DATA);
 
+    struct stat stbuf;
+    mytmpfs_get_stat(ino, &stbuf, DATA);
+    stbuf.st_nlink--;
+    mytmpfs_set_stat(ino, &stbuf, DATA);
+    
     mytmpfs_remove_dirent(ino, res);
     return 0;
 }
