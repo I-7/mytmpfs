@@ -64,5 +64,6 @@ int mytmpfs_write(const char *path, const char *buf, size_t len, off_t offset, s
 int mytmpfs_mknod(const char *path, mode_t mode, dev_t dev);
 int mytmpfs_unlink(const char *path);
 int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags);
+int mytmpfs_link(const char *path, const char *newpath);
 
 #endif

@@ -8,6 +8,7 @@ static const struct fuse_operations mytmpfs_op = {
     .unlink = mytmpfs_unlink,
     .rmdir = mytmpfs_rmdir,
     .rename = mytmpfs_rename,
+    .link = mytmpfs_link,
     .open = mytmpfs_open,
     .read = mytmpfs_read,
     .write = mytmpfs_write,
@@ -520,8 +521,10 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
 
     ino_t dirino;
     if (mytmpfs_resolve_path(ppath, &dirino) != 0) {
+        free(ppath);
         return -ENOENT;
     }
+    free(ppath);
 
     struct dirent *de;
     unsigned long res = ULONG_MAX;
@@ -546,8 +549,10 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
     
     ino_t ndirino;
     if (mytmpfs_resolve_path(pnpath, &ndirino) != 0) {
+        free(pnpath);
         return -ENOENT;
     }
+    free(pnpath);
 
     char *newpathpar = malloc(3 * strlen(newpath));
     memset(newpathpar, 0, 3 * strlen(newpath));
@@ -559,12 +564,14 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
         newpathpar[pos + 2] = '.';
         mytmpfs_resolve_path(newpathpar, &tmp);
         if (tmp == ino) {
+            free(newpathpar);
             return -EINVAL;
         }
         if (tmp == 1) {
             break;
         }
     }
+    free(newpathpar);
 
     unsigned long nres = ULONG_MAX;
     ino_t nino;
@@ -651,6 +658,74 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
     }
 
     return -ENOSYS;
+}
+
+int mytmpfs_link(const char *path, const char *newpath)
+{
+    const char *lst = strrchr(path, '/');
+    const char *name = lst + 1;
+    char *ppath = (char*)malloc(lst - path + 1);
+    memcpy(ppath, path, lst - path);
+    ppath[lst - path] = '\0';
+
+    ino_t dirino;
+    if (mytmpfs_resolve_path(ppath, &dirino) != 0) {
+        free(ppath);
+        return -ENOENT;
+    }
+    free(ppath);
+
+    struct dirent *de;
+    unsigned long res = ULONG_MAX;
+    ino_t ino;
+    for (unsigned long i = 0; i < USERDATA_SIZE(dirino); i += sizeof(struct dirent)) {
+        de = (struct dirent*)(USERDATA_RAW(dirino) + i);
+        if (strcmp(name, de->d_name) == 0) {
+            ino = de->d_ino;
+            res = i;
+            break;
+        }
+    }
+    if (res == ULONG_MAX) {
+        return -ENOENT;
+    }
+
+    struct stat stbuf;
+    mytmpfs_get_stat(ino, &stbuf, DATA);
+    if ((stbuf.st_mode & S_IFMT) != S_IFREG) {
+        return -EPERM;
+    }
+
+    const char *nlst = strrchr(newpath, '/');
+    const char *nname = nlst + 1;
+    char *pnpath = (char*)malloc(nlst - newpath + 1);
+    memcpy(pnpath, newpath, nlst - newpath);
+    pnpath[nlst - newpath] = '\0';
+    
+    ino_t ndirino;
+    if (mytmpfs_resolve_path(pnpath, &ndirino) != 0) {
+        free(pnpath);
+        return -ENOENT;
+    }
+    free(pnpath);
+
+    unsigned long nres = ULONG_MAX;
+    for (unsigned long i = 0; i < USERDATA_SIZE(ndirino); i += sizeof(struct dirent)) {
+        de = (struct dirent*)(USERDATA_RAW(ndirino) + i);
+        if (strcmp(nname, de->d_name) == 0) {
+            nres = i;
+            break;
+        }
+    }
+
+    if (nres != ULONG_MAX) {
+        return -EEXIST;
+    }
+
+    mytmpfs_create_dirent(ndirino, ino, nname);
+    stbuf.st_nlink++;
+    mytmpfs_set_stat(ino, &stbuf, DATA);
+    return 0;
 }
 
 int main(int argc, char *argv[])
