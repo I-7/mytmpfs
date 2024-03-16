@@ -66,5 +66,6 @@ int mytmpfs_unlink(const char *path);
 int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags);
 int mytmpfs_link(const char *path, const char *newpath);
 void mytmpfs_destroy(void *private_data);
+int mytmpfs_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi);
 
 #endif

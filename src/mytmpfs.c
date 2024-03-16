@@ -17,7 +17,8 @@ static const struct fuse_operations mytmpfs_op = {
     .readdir = mytmpfs_readdir,
     .releasedir = mytmpfs_releasedir,
     .init = mytmpfs_init,
-    .destroy = mytmpfs_destroy
+    .destroy = mytmpfs_destroy,
+    .utimens = mytmpfs_utimens
 };
 
 inline int mytmpfs_resolve_path(const char *path, ino_t *ino)
@@ -598,18 +599,24 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
 
     if ((statbuf.st_mode & S_IFMT) == S_IFDIR) {
         if (nres != ULONG_MAX) {
-            if (USERDATA_SIZE(nino) != 2 * sizeof(struct dirent)) {
-                return -EEXIST;
-            }
             struct stat tmp;
             mytmpfs_get_stat(nino, &tmp, DATA);
             if ((tmp.st_mode & S_IFMT) != S_IFDIR) {
                 return -ENOTDIR;
             }
             if (flags & RENAME_EXCHANGE) {
+                mytmpfs_get_stat(dirino, &tmp, DATA);
+                tmp.st_mtime = time(&tmp.st_atime);
+                mytmpfs_set_stat(dirino, &tmp, DATA);
+                mytmpfs_get_stat(ndirino, &tmp, DATA);
+                tmp.st_mtime = time(&tmp.st_atime);
+                mytmpfs_set_stat(ndirino, &tmp, DATA);
                 ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_ino = nino;
                 ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
                 return 0;
+            }
+            if (USERDATA_SIZE(nino) != 2 * sizeof(struct dirent)) {
+                return -EEXIST;
             }
 
             tmp.st_nlink--;
@@ -624,6 +631,9 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
             }
 
             mytmpfs_remove_dirent(dirino, res);
+            mytmpfs_get_stat(ndirino, &tmp, DATA);
+            tmp.st_mtime = time(&tmp.st_atime);
+            mytmpfs_set_stat(ndirino, &tmp, DATA);
             ((struct dirent*)(USERDATA_RAW(ndirino) + nres - sizeof(struct dirent) * (dirino == ndirino && res < nres)))->d_ino = ino;
             return 0;
         }
@@ -634,13 +644,19 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
 
     if ((statbuf.st_mode & S_IFMT) == S_IFREG) {
         if (nres != ULONG_MAX) {
+            struct stat tmp;
             if (flags & RENAME_EXCHANGE) {
+                mytmpfs_get_stat(dirino, &tmp, DATA);
+                tmp.st_mtime = time(&tmp.st_atime);
+                mytmpfs_set_stat(dirino, &tmp, DATA);
+                mytmpfs_get_stat(ndirino, &tmp, DATA);
+                tmp.st_mtime = time(&tmp.st_atime);
+                mytmpfs_set_stat(ndirino, &tmp, DATA);
                 ((struct dirent*)(USERDATA_RAW(dirino) + res))->d_ino = nino;
                 ((struct dirent*)(USERDATA_RAW(ndirino) + nres))->d_ino = ino;
                 return 0;
             }
 
-            struct stat tmp;
             mytmpfs_get_stat(nino, &tmp, DATA);
             tmp.st_nlink--;
             if (tmp.st_nlink == 0) {
@@ -654,6 +670,9 @@ int mytmpfs_rename(const char *path, const char *newpath, unsigned int flags)
             }
 
             mytmpfs_remove_dirent(dirino, res);
+            mytmpfs_get_stat(ndirino, &tmp, DATA);
+            tmp.st_mtime = time(&tmp.st_atime);
+            mytmpfs_set_stat(ndirino, &tmp, DATA);
             ((struct dirent*)(USERDATA_RAW(ndirino) + nres - sizeof(struct dirent) * (dirino == ndirino && res < nres)))->d_ino = ino;
             return 0;
         }
@@ -744,6 +763,32 @@ void mytmpfs_destroy(void *private_data)
         free(mytmpfs_dt->userdata[i]);
     }
     free(mytmpfs_dt->userdata);
+}
+
+int mytmpfs_utimens(const char *path, const struct timespec tv[2], struct fuse_file_info *fi)
+{
+    ino_t ino;
+    if (fi != NULL) {
+        ino = fi->fh;
+    } else {
+        if (mytmpfs_resolve_path(path, &ino) != 0) {
+            return -ENOENT;
+        }
+    }
+    struct stat stbuf;
+    mytmpfs_get_stat(ino, &stbuf, DATA); 
+    if (tv[0].tv_nsec == UTIME_NOW) {
+        time(&stbuf.st_atime);
+    } else if (tv[0].tv_nsec != UTIME_OMIT) {
+        stbuf.st_atim = tv[0];
+    }
+    if (tv[1].tv_nsec == UTIME_NOW) {
+        time(&stbuf.st_atime);
+    } else if (tv[1].tv_nsec != UTIME_OMIT) {
+        stbuf.st_atim = tv[1];
+    }
+    mytmpfs_set_stat(ino, &stbuf, DATA);
+    return 0;
 }
 
 int main(int argc, char *argv[])
