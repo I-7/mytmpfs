@@ -13,9 +13,10 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 
-#define STATS_ROOTS             ((BLOCK_SIZE - 2 * sizeof(unsigned long)) / sizeof(void*))
+#define MYTMPFS_BLOCK_SIZE      512
+#define STATS_ROOTS             ((MYTMPFS_BLOCK_SIZE - sizeof(unsigned long) - 2 * sizeof(void*)) / sizeof(void*))
 #define BLOCKS_PER_PAGE         4
-#define STATS_PER_PAGE          ((BLOCK_SIZE * BLOCKS_PER_PAGE - 3 * sizeof(unsigned long)) / sizeof(struct stat))
+#define STATS_PER_PAGE          ((MYTMPFS_BLOCK_SIZE * BLOCKS_PER_PAGE - 3 * sizeof(unsigned long)) / sizeof(struct stat))
 
 struct mytmpfs_data
 {

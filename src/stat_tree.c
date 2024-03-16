@@ -4,7 +4,7 @@
 
 void* mytmpfs_allocate_stats_page(struct mytmpfs_data *data)
 {
-    void* new_page = malloc(BLOCKS_PER_PAGE * BLOCK_SIZE);
+    void* new_page = malloc(BLOCKS_PER_PAGE * MYTMPFS_BLOCK_SIZE);
     if (new_page == NULL) {
         return NULL;
     }
@@ -82,7 +82,7 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, struct mytmpfs
         // We won't allocate more than 1 page for the path, so we can do it beforehands
         // So no changes would be made in case of unsucessful allocation
         void* nxtpage = NULL;
-        if ((char*)tree->ptr + sizeof(struct stat_tree_node) * id_first_empty_root > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
+        if ((char*)tree->ptr + sizeof(struct stat_tree_node) * id_first_empty_root > (char*)tree->lptr + BLOCKS_PER_PAGE * MYTMPFS_BLOCK_SIZE) {
             nxtpage = mytmpfs_allocate_stats_page(data);
             if (nxtpage == NULL) {
                 free(loc);
@@ -105,7 +105,7 @@ int mytmpfs_create_stat(const struct stat *statbuf, __ino_t *ino, struct mytmpfs
         }
 
         for (unsigned int i = 0; i < id_first_empty_root; i++) {
-            if ((char*)tree->ptr + sizeof(struct stat_tree_node) > (char*)tree->lptr + BLOCKS_PER_PAGE * BLOCK_SIZE) {
+            if ((char*)tree->ptr + sizeof(struct stat_tree_node) > (char*)tree->lptr + BLOCKS_PER_PAGE * MYTMPFS_BLOCK_SIZE) {
                 tree->ptr = nxtpage;
                 tree->lptr = nxtpage;
             }
